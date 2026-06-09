@@ -1,3 +1,17 @@
+# Test CosyVoice ckpt on MUSA
+```bash
+git clone https://github.com/gliangMT/seed-tts-eval.git
+
+cd seed-tts-eval
+pip install -r requirements.txt
+
+# load cosyvoice的ckpt执行推理，注意相关路径
+bash infer_cosyvoice.sh
+
+# 执行评测
+bash musa_cal_wer.sh
+```
+
 # seed-tts-eval
 :boom: This repository contains the objective test set as proposed in our project, [seed-TTS](https://arxiv.org/abs/2406.02430), along with the scripts for metric calculations.  Due to considerations for AI safety, we will NOT be releasing the source code and model weights of seed-TTS. We invite you to experience the speech generation feature within ByteDance products. :boom:
 
