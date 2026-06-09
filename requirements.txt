@@ -2,5 +2,11 @@ funasr
 zhconv
 modelscope
 librosa
-torch
-torchaudio
+jiwer==2.5.1
+zhon
+transformers
+soundfile
+scipy
+tqdm
+# torch
+# torchaudio

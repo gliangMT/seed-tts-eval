@@ -5,26 +5,29 @@ from jiwer import compute_measures
 from zhon.hanzi import punctuation
 import string
 import numpy as np
-from transformers import WhisperProcessor, WhisperForConditionalGeneration 
 import soundfile as sf
 import scipy
 import zhconv
-from funasr import AutoModel
 
 punctuation_all = punctuation + string.punctuation
 
 wav_res_text_path = sys.argv[1]
 res_path = sys.argv[2]
 lang = sys.argv[3] # zh or en
-device = "cuda:0"
+device = "musa:0"
 
 def load_en_model():
-    model_id = "openai/whisper-large-v3"
+    from transformers import WhisperProcessor, WhisperForConditionalGeneration
+
+    # model_id = "openai/whisper-large-v3"
+    model_id = "/home/cosyvoice-test/data/models/whisper-large-v3"
     processor = WhisperProcessor.from_pretrained(model_id)
     model = WhisperForConditionalGeneration.from_pretrained(model_id).to(device)
     return processor, model
 
 def load_zh_model():
+    from funasr import AutoModel
+
     model = AutoModel(model="paraformer-zh")
     return model
 
