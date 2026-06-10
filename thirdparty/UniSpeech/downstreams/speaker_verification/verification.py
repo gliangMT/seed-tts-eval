@@ -1,12 +1,12 @@
 import soundfile as sf
 import torch
-import fire
 import torch.nn.functional as F
 from torchaudio.transforms import Resample
 from models.ecapa_tdnn import ECAPA_TDNN_SMALL
 import librosa
 
 MODEL_LIST = ['ecapa_tdnn', 'hubert_large', 'wav2vec2_xlsr', 'unispeech_sat', "wavlm_base_plus", "wavlm_large"]
+MIN_AUDIO_SAMPLES_16K = 1600
 
 
 def init_model(model_name, checkpoint=None):
@@ -38,7 +38,8 @@ def init_model(model_name, checkpoint=None):
 def verification(model_name,  wav1, wav2, use_gpu=True, checkpoint=None, wav1_start_sr=0, wav2_start_sr=0, wav1_end_sr=-1, wav2_end_sr=-1, model=None, wav2_cut_wav1=False, device="cuda:0"):
 
     assert model_name in MODEL_LIST, 'The model_name should be in {}'.format(MODEL_LIST)
-    model = init_model(model_name, checkpoint) if model is None else model
+    model_is_new = model is None
+    model = init_model(model_name, checkpoint) if model_is_new else model
 
     wav1, sr1 = librosa.load(wav1, sr=None, mono=False)
 
@@ -56,6 +57,11 @@ def verification(model_name,  wav1, wav2, use_gpu=True, checkpoint=None, wav1_st
     resample2 = Resample(orig_freq=sr2, new_freq=16000)
     wav1 = resample1(wav1)
     wav2 = resample2(wav2)
+    if wav1.shape[-1] < MIN_AUDIO_SAMPLES_16K or wav2.shape[-1] < MIN_AUDIO_SAMPLES_16K:
+        raise ValueError(
+            "audio is too short for WavLM speaker verification: "
+            f"wav1={wav1.shape[-1] / 16000:.3f}s, wav2={wav2.shape[-1] / 16000:.3f}s"
+        )
     # print(f'origin wav1 sr: {wav1.shape}, wav2 sr: {wav2.shape}')
     if wav2_cut_wav1:
         wav2 = wav2[...,wav1.shape[-1]:]
@@ -65,12 +71,13 @@ def verification(model_name,  wav1, wav2, use_gpu=True, checkpoint=None, wav1_st
     # print(f'cutted wav1 sr: {wav1.shape}, wav2 sr: {wav2.shape}')
 
     if use_gpu:
-        model = model.cuda(device)
-        wav1 = wav1.cuda(device)
-        wav2 = wav2.cuda(device)
+        if model_is_new:
+            model = model.to(device)
+        wav1 = wav1.to(device)
+        wav2 = wav2.to(device)
 
     model.eval()
-    with torch.no_grad():
+    with torch.inference_mode():
         emb1 = model(wav1)
         emb2 = model(wav2)
 
@@ -91,8 +98,8 @@ def extract_embedding(model_name,  wav1, use_gpu=True, checkpoint=None, wav1_sta
     # print(f'origin wav1 sr: {wav1.shape}, wav2 sr: {wav2.shape}')
     wav1 = wav1[...,wav1_start_sr:wav1_end_sr if wav1_end_sr > 0 else wav1.shape[-1]]
     if use_gpu:
-        model = model.cuda(device)
-        wav1 = wav1.cuda(device)
+        model = model.to(device)
+        wav1 = wav1.to(device)
 
     model.eval()
     with torch.no_grad():
@@ -101,5 +108,6 @@ def extract_embedding(model_name,  wav1, use_gpu=True, checkpoint=None, wav1_sta
     return emb1, model
 
 if __name__ == "__main__":
-    fire.Fire(verification)
+    import fire
 
+    fire.Fire(verification)

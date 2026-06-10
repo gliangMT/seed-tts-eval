@@ -7,8 +7,14 @@ from pathlib import Path
 from tqdm import tqdm
 
 
-DEFAULT_COSYVOICE_ROOT = "/home/cosyvoice-test/CosyVoice"
-DEFAULT_MODEL_DIR = "/home/cosyvoice-test/pretrained_models/Fun-CosyVoice3-0.5B-test"
+DEFAULT_COSYVOICE_ROOT = os.environ.get(
+    "COSYVOICE_ROOT",
+    "/home/cosyvoice-test/CosyVoice",
+)
+DEFAULT_MODEL_DIR = os.environ.get(
+    "COSYVOICE_MODEL_DIR",
+    "/home/cosyvoice-test/pretrained_models/Fun-CosyVoice3-0.5B",
+)
 DEFAULT_PROMPT_PREFIX = "You are a helpful assistant.<|endofprompt|>"
 
 
@@ -21,7 +27,10 @@ def parse_args():
     parser.add_argument(
         "--model-dir",
         default=DEFAULT_MODEL_DIR,
-        help="CosyVoice model directory, usually the finetuned checkpoint wrapper",
+        help=(
+            "CosyVoice model directory. Defaults to COSYVOICE_MODEL_DIR, then the "
+            "pretrained Fun-CosyVoice3-0.5B directory."
+        ),
     )
     parser.add_argument(
         "--cosyvoice-root",
@@ -117,23 +126,24 @@ def load_items(meta_lst, start, limit, num_shards, shard_index):
     meta_path = Path(meta_lst).resolve()
     meta_dir = meta_path.parent
     items = []
-    valid_index = 0
+    selected_index = 0
     with meta_path.open("r", encoding="utf-8") as f:
         for line_no, line in enumerate(f, start=1):
             if not line.strip():
                 continue
-            if line_no <= start:
+            if selected_index < start:
+                selected_index += 1
                 continue
+            if limit is not None and selected_index >= start + limit:
+                break
             try:
                 item = parse_meta_line(line, meta_dir)
             except ValueError as exc:
                 raise ValueError(f"{meta_path}:{line_no}: {exc}") from exc
 
-            if valid_index % num_shards == shard_index:
+            if (selected_index - start) % num_shards == shard_index:
                 items.append(item)
-                if limit is not None and len(items) >= limit:
-                    break
-            valid_index += 1
+            selected_index += 1
     return items
 
 

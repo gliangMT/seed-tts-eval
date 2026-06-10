@@ -15,6 +15,13 @@ bash musa_cal_wer.sh
 # seed-tts-eval
 :boom: This repository contains the objective test set as proposed in our project, [seed-TTS](https://arxiv.org/abs/2406.02430), along with the scripts for metric calculations.  Due to considerations for AI safety, we will NOT be releasing the source code and model weights of seed-TTS. We invite you to experience the speech generation feature within ByteDance products. :boom:
 
+## CosyVoice3 on MUSA
+
+For the local CosyVoice3 generation, multi-card MUSA inference, WER, SIM, and
+checkpoint evaluation workflow, see:
+
+[Seed-TTS-Eval + CosyVoice3 + MUSA 评测入门指南](MUSA_COSYVOICE_EVAL_GUIDE.md)
+
 To evaluate the zero-shot speech generation ability of our model, we propose an out-of-domain objective evaluation test set. This test set consists of samples extracted from English (EN) and Mandarin (ZH) public corpora that are used to measure the model's performance on various objective metrics. Specifically, we employ 1,000 samples from the [Common Voice](https://commonvoice.mozilla.org/en) dataset and 2,000 samples from the [DiDiSpeech-2](https://arxiv.org/pdf/2010.09275) dataset. 
 
 ## Requirements

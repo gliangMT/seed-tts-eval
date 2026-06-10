@@ -17,6 +17,7 @@ parser.add_argument('--wav1_end_sr', type=int)
 parser.add_argument('--wav2_end_sr', type=int)
 parser.add_argument('--wav2_cut_wav1', type=bool, default=False)
 parser.add_argument('--device', default="cuda:0")
+parser.add_argument('--strict', action='store_true')
 args = parser.parse_args()
 
 f = open(args.pair)
@@ -39,6 +40,7 @@ assert len(tsv1) == len(tsv2)
 
 model = None
 score_list = []
+failures = []
 for t1, t2 in tqdm.tqdm(zip(tsv1, tsv2), total=len(tsv1)):
     t1_path = t1.strip()
     t2_path = t2.strip()
@@ -48,6 +50,7 @@ for t1, t2 in tqdm.tqdm(zip(tsv1, tsv2), total=len(tsv1)):
         sim, model = verification(args.model_name, t1_path, t2_path, use_gpu=True, checkpoint=args.checkpoint, wav1_start_sr=args.wav1_start_sr, wav2_start_sr=args.wav2_start_sr, wav1_end_sr=args.wav1_end_sr, wav2_end_sr=args.wav2_end_sr, model=model, wav2_cut_wav1=args.wav2_cut_wav1, device=args.device)
     except Exception as e:
         print(str(e))
+        failures.append((t1_path, t2_path, str(e)))
         continue
 
     if sim is None:
@@ -56,6 +59,16 @@ for t1, t2 in tqdm.tqdm(zip(tsv1, tsv2), total=len(tsv1)):
     # print(f'{t1_path}_{args.wav1_start_sr}_{args.wav1_end_sr}|{t2_path}_{args.wav2_start_sr}_{args.wav2_end_sr}\t{sim.cpu().item()}')
     score_list.append(sim.cpu().item())
     scores_w.flush()
+if not score_list:
+    raise RuntimeError("no valid similarity scores were produced")
 scores_w.write(f'avg score: {sum(score_list)/len(score_list)}')
 scores_w.flush()
+if failures:
+    failure_path = args.scores + ".failures.tsv"
+    with open(failure_path, "w") as failure_file:
+        for wav1, wav2, reason in failures:
+            failure_file.write(f"{wav1}\t{wav2}\t{reason}\n")
+    print(f"warning: {len(failures)} similarity samples skipped; details: {failure_path}")
+    if args.strict:
+        raise RuntimeError(f"{len(failures)} similarity samples failed; details: {failure_path}")
 # print(f'avg score: {round(sum(score_list)/len(score_list), 3)}')

@@ -92,10 +92,20 @@ def run_asr(wav_res_text_path, res_path):
             wav, sr = sf.read(wav_res_path)
             if sr != 16000:
                 wav = scipy.signal.resample(wav, int(len(wav) * 16000 / sr))
-            input_features = processor(wav, sampling_rate=16000, return_tensors="pt").input_features
-            input_features = input_features.to(device)
+            inputs = processor(
+                wav,
+                sampling_rate=16000,
+                return_attention_mask=True,
+                return_tensors="pt",
+            )
+            input_features = inputs.input_features.to(device)
+            attention_mask = inputs.attention_mask.to(device)
             forced_decoder_ids = processor.get_decoder_prompt_ids(language="english", task="transcribe")
-            predicted_ids = model.generate(input_features, forced_decoder_ids=forced_decoder_ids)
+            predicted_ids = model.generate(
+                input_features,
+                attention_mask=attention_mask,
+                forced_decoder_ids=forced_decoder_ids,
+            )
             transcription = processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
         elif lang == "zh":
             res = model.generate(input=wav_res_path,

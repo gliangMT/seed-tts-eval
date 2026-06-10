@@ -1,5 +1,7 @@
 # part of the code is borrowed from https://github.com/lawlict/ECAPA-TDNN
 
+import os
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -194,7 +196,24 @@ class ECAPA_TDNN(nn.Module):
         else:
             if config_path is None:
                 torch.hub._validate_not_a_forked_repo=lambda a,b,c: True
-                self.feature_extract = torch.hub.load('s3prl/s3prl', feat_type)
+                wavlm_checkpoint = os.environ.get("WAVLM_LARGE_CKPT", "")
+                s3prl_repo = os.environ.get(
+                    "S3PRL_HUB_DIR",
+                    os.path.join(torch.hub.get_dir(), "s3prl_s3prl_main"),
+                )
+                if feat_type == "wavlm_large" and wavlm_checkpoint:
+                    if not os.path.isfile(os.path.join(s3prl_repo, "hubconf.py")):
+                        raise FileNotFoundError(
+                            f"local s3prl repository not found: {s3prl_repo}"
+                        )
+                    self.feature_extract = torch.hub.load(
+                        s3prl_repo,
+                        'wavlm_local',
+                        ckpt=wavlm_checkpoint,
+                        source='local',
+                    )
+                else:
+                    self.feature_extract = torch.hub.load('s3prl/s3prl', feat_type)
             else:
                 self.feature_extract = UpstreamExpert(config_path)
             if len(self.feature_extract.model.encoder.layers) == 24 and hasattr(self.feature_extract.model.encoder.layers[23].self_attn, "fp32_attention"):
@@ -299,4 +318,3 @@ if __name__ == '__main__':
     out = model(x)
     # print(model)
     print(out.shape)
-
