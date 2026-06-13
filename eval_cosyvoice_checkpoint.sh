@@ -38,12 +38,12 @@ if [ "${component}" != "llm" ] && [ "${component}" != "flow" ]; then
 fi
 IFS=',' read -r -a devices <<< "${device}"
 if [ "${#devices[@]}" -eq 0 ]; then
-  echo "DEVICE must contain at least one MUSA device, for example 0 or 0,1,2,3." >&2
+  echo "DEVICE must contain at least one CUDA device, for example 0 or 0,1,2,3." >&2
   exit 2
 fi
 for eval_device in "${devices[@]}"; do
   if ! [[ "${eval_device}" =~ ^[0-9]+$ ]]; then
-    echo "Invalid MUSA device in DEVICE=${device}: ${eval_device}" >&2
+    echo "Invalid CUDA device in DEVICE=${device}: ${eval_device}" >&2
     exit 2
   fi
 done
@@ -98,7 +98,7 @@ echo "Evaluation devices: ${device} (${num_devices} workers)"
 infer_pids=()
 for shard_index in "${!devices[@]}"; do
   eval_device="${devices[$shard_index]}"
-  MUSA_VISIBLE_DEVICES="${eval_device}" \
+  CUDA_VISIBLE_DEVICES="${eval_device}" \
     python3 "${SCRIPT_DIR}/infer_cosyvoice_seedtts.py" \
       "${infer_args[@]}" \
       --num-shards "${num_devices}" \
@@ -121,8 +121,8 @@ wer_args=("${meta}" "${wav_dir}" en)
 if [ -n "${limit}" ]; then
   wer_args+=("${limit}")
 fi
-MUSA_DEVICE_LIST="${device}" \
-  ARNOLD_WORKER_GPU="${num_devices}" \
+CUDA_DEVICE_LIST="${device}" \
+  NUM_GPUS="${num_devices}" \
   bash "${SCRIPT_DIR}/cal_wer.sh" "${wer_args[@]}"
 cp "${wav_dir}/wav_res_ref_text.wer" "${score_file}"
 cp "${wav_dir}/wav_res_ref_text" "${wav_list}"

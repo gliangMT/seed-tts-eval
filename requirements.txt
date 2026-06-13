@@ -2,7 +2,7 @@ funasr
 zhconv
 modelscope
 librosa
-jiwer==2.5.1
+jiwer>=3.0,<5
 zhon
 transformers
 soundfile

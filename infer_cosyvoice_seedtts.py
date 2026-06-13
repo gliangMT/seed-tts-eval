@@ -7,13 +7,14 @@ from pathlib import Path
 from tqdm import tqdm
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_COSYVOICE_ROOT = os.environ.get(
     "COSYVOICE_ROOT",
-    "/home/cosyvoice-test/CosyVoice",
+    str(PROJECT_ROOT / "CosyVoice"),
 )
 DEFAULT_MODEL_DIR = os.environ.get(
     "COSYVOICE_MODEL_DIR",
-    "/home/cosyvoice-test/pretrained_models/Fun-CosyVoice3-0.5B",
+    str(PROJECT_ROOT / "pretrained_models" / "Fun-CosyVoice3-0.5B"),
 )
 DEFAULT_PROMPT_PREFIX = "You are a helpful assistant.<|endofprompt|>"
 
@@ -76,24 +77,13 @@ def parse_args():
         default=0,
         help="Current shard index in [0, num_shards).",
     )
-    parser.add_argument(
-        "--disable-torchada",
-        action="store_true",
-        help="Do not import torchada before loading CosyVoice.",
-    )
     return parser.parse_args()
 
 
-def setup_imports(cosyvoice_root, disable_torchada):
+def setup_imports(cosyvoice_root):
     cosyvoice_root = Path(cosyvoice_root).resolve()
     sys.path.insert(0, str(cosyvoice_root))
     sys.path.insert(0, str(cosyvoice_root / "third_party" / "Matcha-TTS"))
-
-    if not disable_torchada:
-        try:
-            import torchada  # noqa: F401
-        except ImportError:
-            pass
 
 
 def parse_meta_line(line, meta_dir):
@@ -149,11 +139,17 @@ def load_items(meta_lst, start, limit, num_shards, shard_index):
 
 def main():
     args = parse_args()
-    setup_imports(args.cosyvoice_root, args.disable_torchada)
+    setup_imports(args.cosyvoice_root)
 
     import torch
     import torchaudio
     from cosyvoice.cli.cosyvoice import AutoModel
+
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA is not available. Install a CUDA-enabled PyTorch build and expose "
+            "a GPU with CUDA_VISIBLE_DEVICES."
+        )
 
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -164,6 +160,10 @@ def main():
         args.limit,
         args.num_shards,
         args.shard_index,
+    )
+    print(
+        f"CUDA device: {torch.cuda.get_device_name(0)}; "
+        f"visible device count: {torch.cuda.device_count()}"
     )
     cosyvoice = AutoModel(model_dir=args.model_dir)
 
