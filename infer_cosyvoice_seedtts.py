@@ -16,7 +16,6 @@ DEFAULT_MODEL_DIR = os.environ.get(
     "/home/cosyvoice-test/pretrained_models/Fun-CosyVoice3-0.5B",
 )
 DEFAULT_PROMPT_PREFIX = "You are a helpful assistant.<|endofprompt|>"
-DEFAULT_SEED = int(os.environ.get("COSYVOICE_SEED", "1986"))
 
 
 def parse_args():
@@ -82,12 +81,6 @@ def parse_args():
         action="store_true",
         help="Do not import torchada before loading CosyVoice.",
     )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=DEFAULT_SEED,
-        help="Base random seed. Each meta item uses seed + its 0-based meta index.",
-    )
     return parser.parse_args()
 
 
@@ -149,16 +142,9 @@ def load_items(meta_lst, start, limit, num_shards, shard_index):
                 raise ValueError(f"{meta_path}:{line_no}: {exc}") from exc
 
             if (selected_index - start) % num_shards == shard_index:
-                item["seed_offset"] = selected_index
                 items.append(item)
             selected_index += 1
     return items
-
-
-def set_inference_seed(seed, set_all_random_seed, torch):
-    set_all_random_seed(seed)
-    if hasattr(torch, "musa") and torch.musa.is_available():
-        torch.musa.manual_seed_all(seed)
 
 
 def main():
@@ -168,7 +154,6 @@ def main():
     import torch
     import torchaudio
     from cosyvoice.cli.cosyvoice import AutoModel
-    from cosyvoice.utils.common import set_all_random_seed
 
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -180,7 +165,6 @@ def main():
         args.num_shards,
         args.shard_index,
     )
-    set_inference_seed(args.seed, set_all_random_seed, torch)
     cosyvoice = AutoModel(model_dir=args.model_dir)
 
     text_frontend = not args.no_text_frontend
@@ -201,7 +185,6 @@ def main():
         prompt_text = f"{args.prompt_prefix}{item['prompt_text']}"
         chunks = []
         try:
-            set_inference_seed(args.seed + item["seed_offset"], set_all_random_seed, torch)
             for result in cosyvoice.inference_zero_shot(
                 item["tts_text"],
                 prompt_text,
