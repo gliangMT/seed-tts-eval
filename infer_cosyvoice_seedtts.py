@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 import argparse
 import os
+import random
 import sys
 from pathlib import Path
 
+import numpy as np
 from tqdm import tqdm
 
 
@@ -16,6 +18,7 @@ DEFAULT_MODEL_DIR = os.environ.get(
     "/home/cosyvoice-test/pretrained_models/Fun-CosyVoice3-0.5B",
 )
 DEFAULT_PROMPT_PREFIX = "You are a helpful assistant.<|endofprompt|>"
+DEFAULT_SEED = int(os.environ.get("COSYVOICE_SEED", "1986"))
 
 
 def parse_args():
@@ -81,6 +84,12 @@ def parse_args():
         action="store_true",
         help="Do not import torchada before loading CosyVoice.",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_SEED,
+        help="Base random seed. Each meta item uses seed + its 0-based meta index.",
+    )
     return parser.parse_args()
 
 
@@ -142,9 +151,18 @@ def load_items(meta_lst, start, limit, num_shards, shard_index):
                 raise ValueError(f"{meta_path}:{line_no}: {exc}") from exc
 
             if (selected_index - start) % num_shards == shard_index:
+                item["seed_offset"] = selected_index
                 items.append(item)
             selected_index += 1
     return items
+
+
+def set_inference_seed(seed, torch):
+    random.seed(seed)
+    np.random.seed(seed % (2 ** 32))
+    torch.manual_seed(seed)
+    if hasattr(torch, "musa") and torch.musa.is_available():
+        torch.musa.manual_seed_all(seed)
 
 
 def main():
@@ -165,6 +183,7 @@ def main():
         args.num_shards,
         args.shard_index,
     )
+    set_inference_seed(args.seed, torch)
     cosyvoice = AutoModel(model_dir=args.model_dir)
 
     text_frontend = not args.no_text_frontend
@@ -185,6 +204,7 @@ def main():
         prompt_text = f"{args.prompt_prefix}{item['prompt_text']}"
         chunks = []
         try:
+            set_inference_seed(args.seed + item["seed_offset"], torch)
             for result in cosyvoice.inference_zero_shot(
                 item["tts_text"],
                 prompt_text,

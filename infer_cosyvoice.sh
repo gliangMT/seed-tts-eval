@@ -8,6 +8,7 @@ set -u
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 META=/home/cosyvoice-test/data/seedtts_testset/en/meta.lst
 OUT=/home/cosyvoice-test/outputs/seedtts_eval/en
+SEED="${COSYVOICE_SEED:-1986}"
 
 mkdir -p "$OUT"
 
@@ -17,6 +18,7 @@ for rank in 0 1 2 3 4 5 6 7; do
     "$META" \
     "$OUT" \
     --num-shards 8 \
+    --seed "$SEED" \
     --overwrite \
     --shard-index $rank &
   pids+=($!)
