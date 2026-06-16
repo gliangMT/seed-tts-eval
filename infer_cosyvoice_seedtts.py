@@ -17,6 +17,7 @@ DEFAULT_MODEL_DIR = os.environ.get(
     str(PROJECT_ROOT / "pretrained_models" / "Fun-CosyVoice3-0.5B"),
 )
 DEFAULT_PROMPT_PREFIX = "You are a helpful assistant.<|endofprompt|>"
+TRAINING_METADATA_KEYS = frozenset({"epoch", "step"})
 
 
 def parse_args():
@@ -137,6 +138,44 @@ def load_items(meta_lst, start, limit, num_shards, shard_index):
     return items
 
 
+def load_cosyvoice_model(auto_model, torch_module, model_dir):
+    model_dir = Path(model_dir).resolve()
+    component_paths = {
+        Path(os.path.realpath(model_dir / "llm.pt")),
+        Path(os.path.realpath(model_dir / "flow.pt")),
+    }
+    original_torch_load = torch_module.load
+
+    def load_without_training_metadata(path, *args, **kwargs):
+        checkpoint = original_torch_load(path, *args, **kwargs)
+        try:
+            checkpoint_path = Path(os.path.realpath(os.fspath(path)))
+        except TypeError:
+            return checkpoint
+
+        if checkpoint_path not in component_paths or not isinstance(checkpoint, dict):
+            return checkpoint
+
+        metadata_keys = TRAINING_METADATA_KEYS.intersection(checkpoint)
+        if not metadata_keys:
+            return checkpoint
+
+        state_dict = checkpoint.copy()
+        for key in metadata_keys:
+            state_dict.pop(key)
+        print(
+            f"Ignoring training checkpoint metadata in {checkpoint_path}: "
+            f"{', '.join(sorted(metadata_keys))}"
+        )
+        return state_dict
+
+    torch_module.load = load_without_training_metadata
+    try:
+        return auto_model(model_dir=str(model_dir))
+    finally:
+        torch_module.load = original_torch_load
+
+
 def main():
     args = parse_args()
     setup_imports(args.cosyvoice_root)
@@ -165,7 +204,7 @@ def main():
         f"CUDA device: {torch.cuda.get_device_name(0)}; "
         f"visible device count: {torch.cuda.device_count()}"
     )
-    cosyvoice = AutoModel(model_dir=args.model_dir)
+    cosyvoice = load_cosyvoice_model(AutoModel, torch, args.model_dir)
 
     text_frontend = not args.no_text_frontend
     failures = []

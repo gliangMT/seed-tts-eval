@@ -42,7 +42,7 @@ if [ "${#devices[@]}" -eq 0 ]; then
   exit 2
 fi
 for eval_device in "${devices[@]}"; do
-  if ! [[ "${eval_device}" =~ ^[0-9]+$ ]]; then
+  if ! [[ "${eval_device}" =~ ^([0-9]+|GPU-[0-9A-Fa-f-]+)$ ]]; then
     echo "Invalid CUDA device in DEVICE=${device}: ${eval_device}" >&2
     exit 2
   fi

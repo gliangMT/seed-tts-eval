@@ -46,7 +46,7 @@ if ! [[ "$num_job" =~ ^[1-9][0-9]*$ ]]; then
 	exit 2
 fi
 for eval_device in "${devices[@]}"; do
-	if ! [[ "$eval_device" =~ ^[0-9]+$ ]]; then
+	if ! [[ "$eval_device" =~ ^([0-9]+|GPU-[0-9A-Fa-f-]+)$ ]]; then
 		echo "Invalid CUDA device in CUDA_DEVICE_LIST=$device_list: $eval_device" >&2
 		exit 2
 	fi
@@ -62,7 +62,7 @@ split -n "l/$num_job" -d -a 2 --additional-suffix=.lst \
 out_dir=/tmp/thread_metas_$timestamp/results/
 mkdir -p "$out_dir"
 
-num_job_minus_1=`expr $num_job - 1`
+num_job_minus_1=$((num_job - 1))
 pids=()
 if [ ${num_job_minus_1} -ge 0 ];then
 	for rank in $(seq 0 $((num_job - 1))); do
