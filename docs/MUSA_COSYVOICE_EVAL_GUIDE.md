@@ -85,18 +85,22 @@ CosyVoice 批量推理脚本会尝试在加载 CosyVoice 前导入 `torchada`。
 | 脚本 | 作用 |
 |---|---|
 | `infer_cosyvoice_seedtts.py` | 单进程或单 shard 的 CosyVoice 推理 |
-| `infer_cosyvoice.sh` | 固定 8 卡、固定测试集与输出目录的推理包装脚本 |
+| `infer_cosyvoice.sh` | 支持 MUSA/CUDA 的多卡推理包装脚本 |
 | `cal_wer.sh` | 将已有 wav 分片后计算 WER |
-| `musa_cal_wer.sh` | 当前英文路径和 8 卡配置的 WER 包装脚本 |
+| `musa_cal_wer.sh` | 设置 MUSA 后端和当前英文路径的 WER 包装脚本 |
 | `cal_sim.sh` | 将已有 wav 分片后计算 SIM |
-| `musa_cal_sim.sh` | 当前英文路径、WavLM 路径和 8 卡配置的 SIM 包装脚本 |
+| `musa_cal_sim.sh` | 设置 MUSA 后端、当前英文路径和 WavLM 路径的 SIM 包装脚本 |
+| `cuda_cal_wer.sh` | 设置 CUDA 后端和当前英文路径的 WER 包装脚本 |
+| `cuda_cal_sim.sh` | 设置 CUDA 后端、当前英文路径和 WavLM 路径的 SIM 包装脚本 |
 | `eval_cosyvoice_checkpoint.sh` | 评测一个 LLM 或 flow checkpoint，输出英文 WER |
 | `watch_cosyvoice_checkpoints.sh` | 持续发现并顺序评测训练 checkpoint |
 | `prepare_ckpt.py` | 在 WER worker 启动前检查 ASR 模型能否加载 |
 | `prepare_wavlm.py` | 解析 s3prl 源码并预加载 WavLM |
 
-其中 `musa_cal_wer.sh`、`musa_cal_sim.sh` 和 `infer_cosyvoice.sh` 是便捷包装脚本，
-内部包含当前机器的固定路径。迁移到其他机器时，优先检查这三个文件。
+其中 `musa_cal_wer.sh`、`musa_cal_sim.sh`、`cuda_cal_wer.sh` 和
+`cuda_cal_sim.sh` 都是便捷包装脚本；核心逻辑在 `infer_cosyvoice.sh`、
+`cal_wer.sh` 和 `cal_sim.sh` 中，通过 `EVAL_BACKEND=musa|cuda` 选择后端。
+迁移到其他机器时，优先检查这些包装脚本中的默认路径和环境变量。
 
 ## 2. 准备测试集
 
@@ -187,8 +191,15 @@ readlink -f \
     > /home/cosyvoice-test/pretrained_models/Fun-CosyVoice3-0.5B
 ```
 
-也就是说，`Fun-CosyVoice3-0.5B-test` 是可选的微调模型包装目录，不是当前默认值。
-运行微调模型时必须显式传入：
+`infer_cosyvoice_seedtts.py` 本身的兜底默认值仍是基础模型
+`Fun-CosyVoice3-0.5B`。但是当前 `infer_cosyvoice.sh` 在
+`EVAL_BACKEND=musa` 时会默认设置：
+
+```text
+COSYVOICE_MODEL_DIR=/home/cosyvoice-test/pretrained_models/Fun-CosyVoice3-0.5B-test
+```
+
+运行微调模型时，推荐显式确认当前模型目录：
 
 ```bash
 export COSYVOICE_MODEL_DIR=/home/cosyvoice-test/pretrained_models/Fun-CosyVoice3-0.5B-test
@@ -220,7 +231,7 @@ funasr
 zhconv
 modelscope
 librosa
-jiwer==2.5.1
+jiwer>=3.0,<5
 zhon
 transformers
 soundfile
@@ -300,6 +311,7 @@ MUSA_VISIBLE_DEVICES=0 \
 python3 /home/cosyvoice-test/seed-tts-eval/infer_cosyvoice_seedtts.py \
   /home/cosyvoice-test/data/seedtts_testset/en/meta.lst \
   /home/cosyvoice-test/outputs/seedtts_eval/en \
+  --device-backend musa \
   --limit 5
 ```
 
@@ -311,6 +323,7 @@ python3 /home/cosyvoice-test/seed-tts-eval/infer_cosyvoice_seedtts.py \
   /home/cosyvoice-test/data/seedtts_testset/en/meta.lst \
   /home/cosyvoice-test/outputs/seedtts_eval/en \
   --model-dir /home/cosyvoice-test/pretrained_models/Fun-CosyVoice3-0.5B-test \
+  --device-backend musa \
   --limit 5
 ```
 
@@ -328,26 +341,35 @@ python3 /home/cosyvoice-test/seed-tts-eval/infer_cosyvoice_seedtts.py \
 执行：
 
 ```bash
+EVAL_BACKEND=musa \
 COSYVOICE_MODEL_DIR=/home/cosyvoice-test/pretrained_models/Fun-CosyVoice3-0.5B-test \
 bash /home/cosyvoice-test/seed-tts-eval/infer_cosyvoice.sh
 ```
 
-如果不设置 `COSYVOICE_MODEL_DIR`，该脚本使用基础模型
-`Fun-CosyVoice3-0.5B`。`COSYVOICE_ROOT` 可以覆盖 CosyVoice 仓库路径。
+如果不设置 `COSYVOICE_MODEL_DIR`，该脚本在 MUSA 后端默认使用
+`Fun-CosyVoice3-0.5B-test`，在 CUDA 后端默认使用 `Fun-CosyVoice3-0.5B`。
+`COSYVOICE_ROOT` 可以覆盖 CosyVoice 仓库路径。
 
-当前包装脚本还固定了：
+当前包装脚本默认使用：
 
 ```text
 meta.lst：/home/cosyvoice-test/data/seedtts_testset/en/meta.lst
 输出目录：/home/cosyvoice-test/outputs/seedtts_eval/en
-设备：MUSA 0 到 7
-分片数：8
+MUSA 设备：MUSA_DEVICE_LIST 指定；未指定时默认 8 个 worker，使用物理卡 0 到 7
+CUDA 设备：CUDA_DEVICE_LIST 指定；未指定时默认 CUDA 0
 ```
 
-需要使用其他测试集、输出目录或非连续设备时，应直接调用
-`infer_cosyvoice_seedtts.py` 启动对应 shard，或者修改包装脚本。
+需要使用其他测试集或输出目录时，可以直接把它们作为前两个参数传给
+`infer_cosyvoice.sh`，也可以设置 `SEED_TTS_META` 和 `SEED_TTS_OUTPUT`：
 
-脚本会启动 8 个独立进程：
+```bash
+EVAL_BACKEND=musa MUSA_DEVICE_LIST=4,5,6,7 \
+bash /home/cosyvoice-test/seed-tts-eval/infer_cosyvoice.sh \
+  /path/to/meta.lst \
+  /path/to/output_dir
+```
+
+脚本会按设备列表启动多个独立进程，例如：
 
 ```text
 进程 0 -> MUSA 0 -> shard 0
@@ -474,11 +496,17 @@ merges.txt
 model.safetensors 或 pytorch_model.bin
 ```
 
-本地模型路径已经写入：
+默认本地模型路径由代码自动判断：
 
 ```text
-prepare_ckpt.py
-run_wer.py
+/home/cosyvoice-test/data/models/whisper-large-v3
+```
+
+如果该目录存在，`prepare_ckpt.py` 和 `run_wer.py` 会优先使用它；否则回退到
+`openai/whisper-large-v3`。也可以通过环境变量覆盖：
+
+```bash
+export WHISPER_MODEL=/path/to/whisper-large-v3
 ```
 
 `prepare_ckpt.py` 只做模型预加载检查：
@@ -488,10 +516,6 @@ run_wer.py
 - 不传语言时加载两者
 
 它不会生成 WER，也不会转换 checkpoint。
-
-当前 Whisper 路径直接写在 `prepare_ckpt.py` 和 `run_wer.py` 中，没有对应环境
-变量。如果模型移动到其他目录，需要同时修改这两个文件，否则预加载和正式 WER
-可能使用不同路径。
 
 `prepare_ckpt.py` 的加载结果不会被多个 WER worker 共享。它的作用是提前暴露
 模型文件缺失、格式错误或设备不可用等问题；随后每个 worker 仍会各加载一份
@@ -514,7 +538,7 @@ Whisper。
 使用物理卡 0 到 7：
 
 ```bash
-ARNOLD_WORKER_GPU=8 \
+MUSA_DEVICE_LIST=0,1,2,3,4,5,6,7 \
 bash /home/cosyvoice-test/seed-tts-eval/cal_wer.sh \
   /home/cosyvoice-test/data/seedtts_testset/en/meta.lst \
   /home/cosyvoice-test/outputs/seedtts_eval/en \
@@ -529,25 +553,24 @@ bash /home/cosyvoice-test/seed-tts-eval/cal_wer.sh \
 参数 3：语言，英文为 en，中文为 zh
 ```
 
-如果不设置 `ARNOLD_WORKER_GPU`，默认只启动 1 个 worker。
+如果不设置 `MUSA_DEVICE_LIST`，`cal_wer.sh` 会根据 `NUM_GPUS`、
+`ARNOLD_WORKER_GPU` 或默认值启动 worker。直接使用 `musa_cal_wer.sh` 时默认
+`ARNOLD_WORKER_GPU=8`。
 
-使用指定的非连续设备时，需要同时设置设备列表和 worker 数。例如使用物理卡
-4、5、6、7：
+使用指定的非连续设备时，推荐只设置 `MUSA_DEVICE_LIST`，worker 数会自动等于
+设备数量。例如使用物理卡 4、5、6、7：
 
 ```bash
-MUSA_VISIBLE_DEVICES=4 \
 MUSA_DEVICE_LIST=4,5,6,7 \
-ARNOLD_WORKER_GPU=4 \
 bash /home/cosyvoice-test/seed-tts-eval/cal_wer.sh \
   /home/cosyvoice-test/data/seedtts_testset/en/meta.lst \
   /home/cosyvoice-test/outputs/seedtts_eval/en \
   en
 ```
 
-`MUSA_DEVICE_LIST` 的数量必须与 `ARNOLD_WORKER_GPU` 一致。每个 worker 内部仍然
-使用逻辑设备 `musa:0`。最前面的 `MUSA_VISIBLE_DEVICES=4` 用于让
-`prepare_ckpt.py` 的预加载检查也落到空闲卡 4；正式 worker 随后会分别覆盖为
-4、5、6、7。
+如果同时设置 `NUM_GPUS` 或 `ARNOLD_WORKER_GPU`，它们的值必须与
+`MUSA_DEVICE_LIST` 的设备数量一致。每个 worker 内部仍然使用逻辑设备
+`musa:0`；`prepare_ckpt.py` 会自动使用设备列表中的第一张卡做预加载检查。
 
 ### 6.5 查看 WER
 
@@ -911,14 +934,20 @@ torch.hub.load(
 它已经设置：
 
 ```bash
+export EVAL_BACKEND=musa
+export S3PRL_HUB_DIR=/home/cosyvoice-test/s3prl
+export S3PRL_OFFLINE=1
 export WAVLM_LARGE_CKPT=/home/cosyvoice-test/data/models/wavlm_large.pt
 export ARNOLD_WORKER_GPU=8
 ```
 
-`WAVLM_LARGE_CKPT` 指向本地模型权重。`S3PRL_HUB_DIR` 不再是必填项，
-脚本会根据 7.5 节的顺序自动查找；只有希望强制使用某个 s3prl 版本时才需要
-手动设置。源码和权重都本地化后，SIM 初始化不会再访问 GitHub 或
-Hugging Face。
+`WAVLM_LARGE_CKPT` 指向本地模型权重。`musa_cal_sim.sh` 默认按离线方式运行：
+如果 `/home/cosyvoice-test/s3prl` 不存在或缺少 `hubconf.py`，会直接报错。
+这种默认值适合固定评测机，能避免评测时意外访问 GitHub 或切换 s3prl 版本。
+
+如果希望使用 7.5 节的自动查找或允许首次联网下载，不要用 `musa_cal_sim.sh`
+的默认离线封装，改为直接调用 `cal_sim.sh`，并按需要设置或取消
+`S3PRL_HUB_DIR`、`S3PRL_OFFLINE`。
 
 直接运行：
 
@@ -931,6 +960,7 @@ bash /home/cosyvoice-test/seed-tts-eval/musa_cal_sim.sh
 ```bash
 ARNOLD_WORKER_GPU=8 \
 WAVLM_LARGE_CKPT=/home/cosyvoice-test/data/models/wavlm_large.pt \
+EVAL_BACKEND=musa \
 bash /home/cosyvoice-test/seed-tts-eval/cal_sim.sh \
   /home/cosyvoice-test/data/seedtts_testset/en/meta.lst \
   /home/cosyvoice-test/outputs/seedtts_eval/en \
@@ -943,6 +973,7 @@ bash /home/cosyvoice-test/seed-tts-eval/cal_sim.sh \
 S3PRL_OFFLINE=1 \
 ARNOLD_WORKER_GPU=8 \
 WAVLM_LARGE_CKPT=/home/cosyvoice-test/data/models/wavlm_large.pt \
+EVAL_BACKEND=musa \
 bash /home/cosyvoice-test/seed-tts-eval/cal_sim.sh \
   /home/cosyvoice-test/data/seedtts_testset/en/meta.lst \
   /home/cosyvoice-test/outputs/seedtts_eval/en \
@@ -952,6 +983,7 @@ bash /home/cosyvoice-test/seed-tts-eval/cal_sim.sh \
 也可以把基础模型作为第四个参数：
 
 ```bash
+EVAL_BACKEND=musa \
 bash /home/cosyvoice-test/seed-tts-eval/cal_sim.sh \
   /home/cosyvoice-test/data/seedtts_testset/en/meta.lst \
   /home/cosyvoice-test/outputs/seedtts_eval/en \
@@ -959,17 +991,17 @@ bash /home/cosyvoice-test/seed-tts-eval/cal_sim.sh \
   /home/cosyvoice-test/data/models/wavlm_large.pt
 ```
 
-当前 `cal_sim.sh` 与 WER 的设备选择方式不同。SIM 只根据
-`ARNOLD_WORKER_GPU=N` 使用物理卡 `0` 到 `N-1`，尚不支持
-`MUSA_DEVICE_LIST=4,5,6,7` 这类非连续设备列表。因此：
+当前 `cal_sim.sh` 和 WER 使用相同的设备选择规则。可以通过
+`MUSA_DEVICE_LIST` 使用非连续设备，例如：
 
-```text
-ARNOLD_WORKER_GPU=4 -> 使用物理卡 0、1、2、3
-ARNOLD_WORKER_GPU=8 -> 使用物理卡 0 到 7
+```bash
+MUSA_DEVICE_LIST=4,5,6,7 \
+bash /home/cosyvoice-test/seed-tts-eval/musa_cal_sim.sh
 ```
 
-如果训练正在占用前几张卡，不要直接并发启动 SIM；应等待空闲、修改
-`cal_sim.sh` 的设备映射，或在独立机器上计算。
+如果同时设置 `NUM_GPUS` 或 `ARNOLD_WORKER_GPU`，它们的值必须与设备列表数量
+一致。每个 worker 内部使用逻辑设备 `musa:0`。如果训练正在占用部分卡，只应
+填写确实有足够空闲显存的设备，或在独立机器上计算。
 
 ### 7.7 查看 SIM
 
@@ -1110,13 +1142,13 @@ ModuleNotFoundError: No module named 'zhon'
 安装：
 
 ```bash
-pip install "jiwer==2.5.1" zhon
+pip install "jiwer>=3.0,<5" zhon
 ```
 
-使用 `jiwer==2.5.1` 是因为当前代码调用旧接口：
+当前代码使用新版 `jiwer` 接口：
 
 ```python
-from jiwer import compute_measures
+from jiwer import process_words
 ```
 
 ### 8.5 输出 wav 数量不足
@@ -1259,7 +1291,7 @@ eval_cosyvoice_checkpoint.sh
 调用：
 
 ```bash
-MUSA_VISIBLE_DEVICES=4 \
+EVAL_BACKEND=musa \
 bash /home/cosyvoice-test/seed-tts-eval/eval_cosyvoice_checkpoint.sh \
   /path/to/epoch_4_whole.pt \
   /home/cosyvoice-test/outputs/checkpoint_eval/epoch_5 \
@@ -1271,7 +1303,7 @@ bash /home/cosyvoice-test/seed-tts-eval/eval_cosyvoice_checkpoint.sh \
 ```text
 参数 1：checkpoint
 参数 2：本次评测输出目录
-参数 3：MUSA 设备编号或逗号分隔列表，默认 0
+参数 3：设备编号或逗号分隔列表，默认 0
 参数 4：只评测前 N 条，可省略
 参数 5：llm 或 flow，默认 llm
 ```
@@ -1299,8 +1331,9 @@ bash /home/cosyvoice-test/seed-tts-eval/eval_cosyvoice_checkpoint.sh \
 ```
 
 第四个参数传空字符串表示不限制样本数。每张卡启动一个 CosyVoice 推理 shard；
-推理结束后 Whisper WER 也按相同设备列表分片。最前面的
-`MUSA_VISIBLE_DEVICES=4` 让 WER 预加载检查使用第一张空闲卡。
+推理结束后 Whisper WER 也按相同设备列表分片。后端由 `EVAL_BACKEND`、
+`MUSA_DEVICE_LIST`、`CUDA_DEVICE_LIST` 或 `DEFAULT_EVAL_BACKEND` 决定；MUSA
+环境中推荐显式设置 `EVAL_BACKEND=musa`。
 
 输出目录结构：
 
@@ -1319,6 +1352,18 @@ flow_epoch_1/
 BASE_MODEL_DIR=/path/to/Fun-CosyVoice3-0.5B
 SEED_TTS_META=/path/to/meta.lst
 COSYVOICE_ROOT=/path/to/CosyVoice
+```
+
+在 MUSA 后端中，如果不设置 `BASE_MODEL_DIR`，默认使用：
+
+```text
+/home/cosyvoice-test/pretrained_models/Fun-CosyVoice3-0.5B-test
+```
+
+CUDA 后端默认使用：
+
+```text
+/home/cosyvoice-test/pretrained_models/Fun-CosyVoice3-0.5B
 ```
 
 评测默认跳过输出目录中已经存在的 wav，适合在中断后续跑。设置
@@ -1462,7 +1507,7 @@ wer_history.tsv
 建议保存 watcher 日志：
 
 ```bash
-MUSA_VISIBLE_DEVICES=4 \
+EVAL_BACKEND=musa \
 POLL_SECONDS=5 \
 WER_WINDOW=5 \
 WER_DELTA=0.1 \
@@ -1499,6 +1544,7 @@ python3 /home/cosyvoice-test/seed-tts-eval/infer_cosyvoice_seedtts.py \
   /home/cosyvoice-test/data/seedtts_testset/en/meta.lst \
   /home/cosyvoice-test/outputs/seedtts_eval/smoke_test \
   --model-dir /home/cosyvoice-test/pretrained_models/Fun-CosyVoice3-0.5B-test \
+  --device-backend musa \
   --limit 5 \
   --overwrite
 ```
@@ -1506,6 +1552,8 @@ python3 /home/cosyvoice-test/seed-tts-eval/infer_cosyvoice_seedtts.py \
 ### 第三步：八卡生成全部音频
 
 ```bash
+EVAL_BACKEND=musa \
+MUSA_DEVICE_LIST=0,1,2,3,4,5,6,7 \
 COSYVOICE_MODEL_DIR=/home/cosyvoice-test/pretrained_models/Fun-CosyVoice3-0.5B-test \
 bash /home/cosyvoice-test/seed-tts-eval/infer_cosyvoice.sh
 ```
@@ -1528,7 +1576,7 @@ find /home/cosyvoice-test/outputs/seedtts_eval/en \
 ### 第五步：计算 WER
 
 ```bash
-ARNOLD_WORKER_GPU=8 \
+MUSA_DEVICE_LIST=0,1,2,3,4,5,6,7 \
 bash /home/cosyvoice-test/seed-tts-eval/cal_wer.sh \
   /home/cosyvoice-test/data/seedtts_testset/en/meta.lst \
   /home/cosyvoice-test/outputs/seedtts_eval/en \
@@ -1573,7 +1621,7 @@ tail -2 \
 ### WER
 
 - Whisper-large-v3 改为本地模型目录
-- CUDA 设备改为 MUSA
+- 支持 `EVAL_BACKEND=musa|cuda` 选择后端
 - 英文和中文模型条件加载
 - 八卡进程使用 `MUSA_VISIBLE_DEVICES`
 - 支持 `MUSA_DEVICE_LIST` 选择非连续设备
@@ -1585,8 +1633,9 @@ tail -2 \
 ### SIM
 
 - `.cuda()` 改为 `.to(device)`
-- 使用 `musa:0`
-- 八卡进程使用 `MUSA_VISIBLE_DEVICES`
+- 支持 `musa:0` 和 `cuda:0`
+- 多卡进程使用后端对应的可见设备变量
+- 支持 `MUSA_DEVICE_LIST` 或 `CUDA_DEVICE_LIST` 选择设备
 - 增加本地 s3prl `wavlm_large.pt` 支持
 - 增加单进程 WavLM 预加载
 - 避免八个 worker 争抢下载锁
