@@ -9,16 +9,18 @@ import numpy as np
 from tqdm import tqdm
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_COSYVOICE_ROOT = os.environ.get(
     "COSYVOICE_ROOT",
-    "/home/cosyvoice-test/CosyVoice",
+    str(PROJECT_ROOT / "CosyVoice"),
 )
 DEFAULT_MODEL_DIR = os.environ.get(
     "COSYVOICE_MODEL_DIR",
-    "/home/cosyvoice-test/pretrained_models/Fun-CosyVoice3-0.5B",
+    str(PROJECT_ROOT / "pretrained_models" / "Fun-CosyVoice3-0.5B"),
 )
 DEFAULT_PROMPT_PREFIX = "You are a helpful assistant.<|endofprompt|>"
 DEFAULT_SEED = int(os.environ.get("COSYVOICE_SEED", "1986"))
+TRAINING_METADATA_KEYS = frozenset({"epoch", "step"})
 
 
 def parse_args():
@@ -90,6 +92,12 @@ def parse_args():
         default=DEFAULT_SEED,
         help="Base random seed. Each meta item uses seed + its 0-based meta index.",
     )
+    parser.add_argument(
+        "--device-backend",
+        choices=("auto", "musa", "cuda"),
+        default=os.environ.get("EVAL_BACKEND", "auto"),
+        help="Accelerator backend to validate before inference.",
+    )
     return parser.parse_args()
 
 
@@ -159,10 +167,80 @@ def load_items(meta_lst, start, limit, num_shards, shard_index):
 
 def set_inference_seed(seed, torch):
     random.seed(seed)
-    np.random.seed(seed % (2 ** 32))
+    np.random.seed(seed % (2**32))
     torch.manual_seed(seed)
     if hasattr(torch, "musa") and torch.musa.is_available():
         torch.musa.manual_seed_all(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def resolve_backend(torch, requested):
+    has_musa = hasattr(torch, "musa") and torch.musa.is_available()
+    has_cuda = torch.cuda.is_available()
+
+    if requested == "musa":
+        if not has_musa:
+            raise RuntimeError("MUSA is not available. Expose a MUSA device with MUSA_VISIBLE_DEVICES.")
+        return "musa"
+    if requested == "cuda":
+        if not has_cuda:
+            raise RuntimeError("CUDA is not available. Expose a CUDA device with CUDA_VISIBLE_DEVICES.")
+        return "cuda"
+    if has_musa:
+        return "musa"
+    if has_cuda:
+        return "cuda"
+    raise RuntimeError("Neither MUSA nor CUDA is available for CosyVoice inference.")
+
+
+def describe_backend(torch, backend):
+    if backend == "musa":
+        device_count = torch.musa.device_count()
+        get_name = getattr(torch.musa, "get_device_name", None)
+        device_name = get_name(0) if get_name and device_count else "MUSA"
+    else:
+        device_count = torch.cuda.device_count()
+        device_name = torch.cuda.get_device_name(0) if device_count else "CUDA"
+    print(f"{backend.upper()} device: {device_name}; visible device count: {device_count}")
+
+
+def load_cosyvoice_model(auto_model, torch_module, model_dir):
+    model_dir = Path(model_dir).resolve()
+    component_paths = {
+        Path(os.path.realpath(model_dir / "llm.pt")),
+        Path(os.path.realpath(model_dir / "flow.pt")),
+    }
+    original_torch_load = torch_module.load
+
+    def load_without_training_metadata(path, *args, **kwargs):
+        checkpoint = original_torch_load(path, *args, **kwargs)
+        try:
+            checkpoint_path = Path(os.path.realpath(os.fspath(path)))
+        except TypeError:
+            return checkpoint
+
+        if checkpoint_path not in component_paths or not isinstance(checkpoint, dict):
+            return checkpoint
+
+        metadata_keys = TRAINING_METADATA_KEYS.intersection(checkpoint)
+        if not metadata_keys:
+            return checkpoint
+
+        state_dict = checkpoint.copy()
+        for key in metadata_keys:
+            state_dict.pop(key)
+        print(
+            f"Ignoring training checkpoint metadata in {checkpoint_path}: "
+            f"{', '.join(sorted(metadata_keys))}"
+        )
+        return state_dict
+
+    torch_module.load = load_without_training_metadata
+    try:
+        return auto_model(model_dir=str(model_dir))
+    finally:
+        torch_module.load = original_torch_load
 
 
 def main():
@@ -172,6 +250,9 @@ def main():
     import torch
     import torchaudio
     from cosyvoice.cli.cosyvoice import AutoModel
+
+    backend = resolve_backend(torch, args.device_backend)
+    describe_backend(torch, backend)
 
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -184,7 +265,7 @@ def main():
         args.shard_index,
     )
     set_inference_seed(args.seed, torch)
-    cosyvoice = AutoModel(model_dir=args.model_dir)
+    cosyvoice = load_cosyvoice_model(AutoModel, torch, args.model_dir)
 
     text_frontend = not args.no_text_frontend
     failures = []

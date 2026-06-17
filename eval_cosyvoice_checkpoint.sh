@@ -15,8 +15,33 @@ output_dir="$2"
 device="${3:-0}"
 limit="${4:-}"
 component="${5:-${MODEL_COMPONENT:-llm}}"
+backend="${EVAL_BACKEND:-}"
+if [ -z "${backend}" ]; then
+  if [ -n "${MUSA_DEVICE_LIST:-}" ]; then
+    backend=musa
+  elif [ -n "${CUDA_DEVICE_LIST:-}" ]; then
+    backend=cuda
+  else
+    backend="${DEFAULT_EVAL_BACKEND:-musa}"
+  fi
+fi
 
-base_model_dir="${BASE_MODEL_DIR:-${WORKSPACE_ROOT}/pretrained_models/Fun-CosyVoice3-0.5B}"
+case "${backend}" in
+  musa)
+    visible_devices_var=MUSA_VISIBLE_DEVICES
+    default_base_model_dir="${WORKSPACE_ROOT}/pretrained_models/Fun-CosyVoice3-0.5B-test"
+    ;;
+  cuda)
+    visible_devices_var=CUDA_VISIBLE_DEVICES
+    default_base_model_dir="${WORKSPACE_ROOT}/pretrained_models/Fun-CosyVoice3-0.5B"
+    ;;
+  *)
+    echo "EVAL_BACKEND must be musa or cuda: ${backend}" >&2
+    exit 2
+    ;;
+esac
+
+base_model_dir="${BASE_MODEL_DIR:-${default_base_model_dir}}"
 meta="${SEED_TTS_META:-${WORKSPACE_ROOT}/data/seedtts_testset/en/meta.lst}"
 cosyvoice_root="${COSYVOICE_ROOT:-${WORKSPACE_ROOT}/CosyVoice}"
 
@@ -38,12 +63,12 @@ if [ "${component}" != "llm" ] && [ "${component}" != "flow" ]; then
 fi
 IFS=',' read -r -a devices <<< "${device}"
 if [ "${#devices[@]}" -eq 0 ]; then
-  echo "DEVICE must contain at least one MUSA device, for example 0 or 0,1,2,3." >&2
+  echo "DEVICE must contain at least one ${backend^^} device, for example 0 or 0,1,2,3." >&2
   exit 2
 fi
 for eval_device in "${devices[@]}"; do
-  if ! [[ "${eval_device}" =~ ^[0-9]+$ ]]; then
-    echo "Invalid MUSA device in DEVICE=${device}: ${eval_device}" >&2
+  if ! [[ "${eval_device}" =~ ^([0-9]+|GPU-[0-9A-Fa-f-]+)$ ]]; then
+    echo "Invalid ${backend^^} device in DEVICE=${device}: ${eval_device}" >&2
     exit 2
   fi
 done
@@ -93,12 +118,13 @@ fi
 
 echo "Evaluating checkpoint: ${checkpoint}"
 echo "Evaluating component: ${component}"
+echo "Evaluation backend: ${backend}"
 echo "Evaluation devices: ${device} (${num_devices} workers)"
 
 infer_pids=()
 for shard_index in "${!devices[@]}"; do
   eval_device="${devices[$shard_index]}"
-  MUSA_VISIBLE_DEVICES="${eval_device}" \
+  env "${visible_devices_var}=${eval_device}" EVAL_BACKEND="${backend}" \
     python3 "${SCRIPT_DIR}/infer_cosyvoice_seedtts.py" \
       "${infer_args[@]}" \
       --num-shards "${num_devices}" \
@@ -121,8 +147,9 @@ wer_args=("${meta}" "${wav_dir}" en)
 if [ -n "${limit}" ]; then
   wer_args+=("${limit}")
 fi
-MUSA_DEVICE_LIST="${device}" \
-  ARNOLD_WORKER_GPU="${num_devices}" \
+env "${visible_devices_var%_VISIBLE_DEVICES}_DEVICE_LIST=${device}" \
+  EVAL_BACKEND="${backend}" \
+  NUM_GPUS="${num_devices}" \
   bash "${SCRIPT_DIR}/cal_wer.sh" "${wer_args[@]}"
 cp "${wav_dir}/wav_res_ref_text.wer" "${score_file}"
 cp "${wav_dir}/wav_res_ref_text" "${wav_list}"

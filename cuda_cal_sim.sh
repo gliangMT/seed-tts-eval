@@ -5,11 +5,10 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 WORKSPACE_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 
-export EVAL_BACKEND=musa
-export MUSA_DEVICE_LIST="${MUSA_DEVICE_LIST:-}"
-export ARNOLD_WORKER_GPU="${ARNOLD_WORKER_GPU:-8}"
-export S3PRL_HUB_DIR="${S3PRL_HUB_DIR:-$WORKSPACE_ROOT/s3prl}"
-export S3PRL_OFFLINE="${S3PRL_OFFLINE:-1}"
+export CUDA_DEVICE_LIST="${CUDA_DEVICE_LIST:-0}"
+IFS=',' read -r -a devices <<< "$CUDA_DEVICE_LIST"
+export EVAL_BACKEND=cuda
+export NUM_GPUS="${NUM_GPUS:-${#devices[@]}}"
 export WAVLM_LARGE_CKPT="${WAVLM_LARGE_CKPT:-$WORKSPACE_ROOT/data/models/wavlm_large.pt}"
 
 bash "$SCRIPT_DIR/cal_sim.sh" \

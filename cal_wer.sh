@@ -1,6 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-set -u
+set -euo pipefail
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
 
@@ -8,6 +8,34 @@ meta_lst=$1
 output_dir=$2
 lang=$3
 limit=${4:-}
+
+backend="${EVAL_BACKEND:-}"
+if [ -z "$backend" ]; then
+	if [ -n "${MUSA_DEVICE_LIST:-}" ]; then
+		backend=musa
+	elif [ -n "${CUDA_DEVICE_LIST:-}" ]; then
+		backend=cuda
+	else
+		backend="${DEFAULT_EVAL_BACKEND:-musa}"
+	fi
+fi
+
+case "$backend" in
+	musa)
+		visible_devices_var=MUSA_VISIBLE_DEVICES
+		device_list="${MUSA_DEVICE_LIST:-}"
+		default_num_job="${NUM_GPUS:-${ARNOLD_WORKER_GPU:-1}}"
+		;;
+	cuda)
+		visible_devices_var=CUDA_VISIBLE_DEVICES
+		device_list="${CUDA_DEVICE_LIST:-}"
+		default_num_job="${NUM_GPUS:-${ARNOLD_WORKER_GPU:-1}}"
+		;;
+	*)
+		echo "EVAL_BACKEND must be musa or cuda: $backend" >&2
+		exit 2
+		;;
+esac
 
 wav_wav_text=$output_dir/wav_res_ref_text
 score_file=$output_dir/wav_res_ref_text.wer
@@ -18,46 +46,59 @@ if [ -n "$limit" ]; then
 fi
 python3 "$script_dir/get_wav_res_ref_text.py" \
 	"$meta_lst" "$output_dir" "$wav_wav_text" "${list_args[@]}"
-python3 "$script_dir/prepare_ckpt.py" "$lang" || exit 1
-
 timestamp=$(date +%s)
 thread_dir=/tmp/thread_metas_$timestamp/
 mkdir -p "$thread_dir"
-num_job=${ARNOLD_WORKER_GPU:-1}
-num=`wc -l $wav_wav_text | awk -F' ' '{print $1}'`
+num=$(wc -l "$wav_wav_text" | awk -F' ' '{print $1}')
 if [ "$num" -eq 0 ]; then
 	echo "No wav entries were found for WER scoring: $wav_wav_text" >&2
 	exit 1
 fi
-device_list=${MUSA_DEVICE_LIST:-}
+
 if [ -n "$device_list" ]; then
 	IFS=',' read -r -a devices <<< "$device_list"
+	num_job=${NUM_GPUS:-${ARNOLD_WORKER_GPU:-${#devices[@]}}}
 	if [ "${#devices[@]}" -ne "$num_job" ]; then
-		echo "MUSA_DEVICE_LIST has ${#devices[@]} devices, but ARNOLD_WORKER_GPU=$num_job" >&2
+		echo "${backend^^} device list has ${#devices[@]} devices, but NUM_GPUS/ARNOLD_WORKER_GPU=$num_job" >&2
 		exit 2
 	fi
 else
+	num_job=$default_num_job
 	devices=()
 	for rank in $(seq 0 $((num_job - 1))); do
 		devices+=("$rank")
 	done
 fi
+if ! [[ "$num_job" =~ ^[1-9][0-9]*$ ]]; then
+	echo "NUM_GPUS/ARNOLD_WORKER_GPU must be a positive integer: $num_job" >&2
+	exit 2
+fi
+for eval_device in "${devices[@]}"; do
+	if ! [[ "$eval_device" =~ ^([0-9]+|GPU-[0-9A-Fa-f-]+)$ ]]; then
+		echo "Invalid ${backend^^} device: $eval_device" >&2
+		exit 2
+	fi
+done
 if [ "$num_job" -gt "$num" ]; then
 	num_job=$num
 	devices=("${devices[@]:0:$num_job}")
 fi
-num_per_thread=`expr $num / $num_job + 1`
-split -l "$num_per_thread" --additional-suffix=.lst -d "$wav_wav_text" "$thread_dir/thread-"
+
+env "$visible_devices_var=${devices[0]}" EVAL_DEVICE="$backend:0" \
+	python3 "$script_dir/prepare_ckpt.py" "$lang"
+split -n "l/$num_job" -d -a 2 --additional-suffix=.lst \
+	"$wav_wav_text" "$thread_dir/thread-"
 out_dir=/tmp/thread_metas_$timestamp/results/
 mkdir -p "$out_dir"
 
-num_job_minus_1=`expr $num_job - 1`
+num_job_minus_1=$((num_job - 1))
 pids=()
 if [ ${num_job_minus_1} -ge 0 ];then
 	for rank in $(seq 0 $((num_job - 1))); do
 		shard=$(printf "%02d" "$rank")
 		sub_score_file=$out_dir/thread-$shard.wer.out
-		MUSA_VISIBLE_DEVICES="${devices[$rank]}" python3 "$script_dir/run_wer.py" "$thread_dir/thread-$shard.lst" "$sub_score_file" "$lang" &
+		env "$visible_devices_var=${devices[$rank]}" EVAL_DEVICE="$backend:0" \
+			python3 "$script_dir/run_wer.py" "$thread_dir/thread-$shard.lst" "$sub_score_file" "$lang" &
 		pids+=($!)
 	done
 fi
