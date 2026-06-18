@@ -5,9 +5,8 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 WORKSPACE_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 
-export EVAL_BACKEND=musa
-export MUSA_DEVICE_LIST="${MUSA_DEVICE_LIST:-}"
-export ARNOLD_WORKER_GPU="${ARNOLD_WORKER_GPU:-8}"
+unset CUDA_VISIBLE_DEVICES
+export MUSA_VISIBLE_DEVICES="${MUSA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 
 bash "$SCRIPT_DIR/cal_wer.sh" \
   "${SEED_TTS_META:-$WORKSPACE_ROOT/data/seedtts_testset/en/meta.lst}" \

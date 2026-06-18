@@ -5,9 +5,8 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 WORKSPACE_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 
-export EVAL_BACKEND=musa
-export MUSA_DEVICE_LIST="${MUSA_DEVICE_LIST:-}"
-export ARNOLD_WORKER_GPU="${ARNOLD_WORKER_GPU:-8}"
+unset CUDA_VISIBLE_DEVICES
+export MUSA_VISIBLE_DEVICES="${MUSA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 export S3PRL_HUB_DIR="${S3PRL_HUB_DIR:-$WORKSPACE_ROOT/s3prl}"
 export S3PRL_OFFLINE="${S3PRL_OFFLINE:-1}"
 export WAVLM_LARGE_CKPT="${WAVLM_LARGE_CKPT:-$WORKSPACE_ROOT/data/models/wavlm_large.pt}"

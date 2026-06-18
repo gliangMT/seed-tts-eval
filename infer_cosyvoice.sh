@@ -5,35 +5,26 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 WORKSPACE_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 
-backend="${EVAL_BACKEND:-}"
-if [ -z "$backend" ]; then
-  if [ -n "${MUSA_DEVICE_LIST:-}" ]; then
-    backend=musa
-  elif [ -n "${CUDA_DEVICE_LIST:-}" ]; then
-    backend=cuda
-  else
-    backend="${DEFAULT_EVAL_BACKEND:-musa}"
-  fi
+musa_devices="${MUSA_VISIBLE_DEVICES:-}"
+cuda_devices="${CUDA_VISIBLE_DEVICES:-}"
+
+if [ -n "$musa_devices" ] && [ -n "$cuda_devices" ]; then
+  echo "Set only one of MUSA_VISIBLE_DEVICES or CUDA_VISIBLE_DEVICES." >&2
+  exit 2
+elif [ -n "$musa_devices" ]; then
+  backend=musa
+  visible_devices_var=MUSA_VISIBLE_DEVICES
+  device_list="$musa_devices"
+elif [ -n "$cuda_devices" ]; then
+  backend=cuda
+  visible_devices_var=CUDA_VISIBLE_DEVICES
+  device_list="$cuda_devices"
+else
+  echo "Set MUSA_VISIBLE_DEVICES or CUDA_VISIBLE_DEVICES, for example MUSA_VISIBLE_DEVICES=0,1." >&2
+  exit 2
 fi
 
-case "$backend" in
-  musa)
-    visible_devices_var=MUSA_VISIBLE_DEVICES
-    device_list="${MUSA_DEVICE_LIST:-}"
-    default_num_devices="${NUM_GPUS:-${ARNOLD_WORKER_GPU:-8}}"
-    default_model_dir="$WORKSPACE_ROOT/pretrained_models/Fun-CosyVoice3-0.5B-test"
-    ;;
-  cuda)
-    visible_devices_var=CUDA_VISIBLE_DEVICES
-    device_list="${CUDA_DEVICE_LIST:-0}"
-    default_num_devices=""
-    default_model_dir="$WORKSPACE_ROOT/pretrained_models/Fun-CosyVoice3-0.5B"
-    ;;
-  *)
-    echo "EVAL_BACKEND must be musa or cuda: $backend" >&2
-    exit 2
-    ;;
-esac
+default_model_dir="$WORKSPACE_ROOT/pretrained_models/Fun-CosyVoice3-0.5B-test"
 
 META=${1:-${SEED_TTS_META:-$WORKSPACE_ROOT/data/seedtts_testset/en/meta.lst}}
 OUT=${2:-${SEED_TTS_OUTPUT:-$WORKSPACE_ROOT/outputs/seedtts_eval/en}}
@@ -50,18 +41,7 @@ if [ ! -d "$COSYVOICE_MODEL_DIR" ]; then
   exit 1
 fi
 
-if [ -n "$device_list" ]; then
-  IFS=',' read -r -a devices <<< "$device_list"
-else
-  if ! [[ "$default_num_devices" =~ ^[1-9][0-9]*$ ]]; then
-    echo "NUM_GPUS/ARNOLD_WORKER_GPU must be a positive integer: $default_num_devices" >&2
-    exit 2
-  fi
-  devices=()
-  for rank in $(seq 0 $((default_num_devices - 1))); do
-    devices+=("$rank")
-  done
-fi
+IFS=',' read -r -a devices <<< "$device_list"
 
 if [ "${#devices[@]}" -eq 0 ]; then
   echo "Device list must contain at least one device, for example 0 or 0,1." >&2
@@ -75,15 +55,20 @@ for device in "${devices[@]}"; do
 done
 
 num_shards=${#devices[@]}
+selected_devices="$(IFS=,; echo "${devices[*]}")"
 mkdir -p "$OUT"
+
+echo "Evaluation backend: $backend"
+echo "Evaluation devices: $selected_devices ($num_shards workers)"
+echo "Output directory: $OUT"
 
 pids=()
 for shard_index in "${!devices[@]}"; do
   env "$visible_devices_var=${devices[$shard_index]}" \
-    EVAL_BACKEND="$backend" \
     python3 "$SCRIPT_DIR/infer_cosyvoice_seedtts.py" \
       "$META" \
       "$OUT" \
+      --device-backend "$backend" \
       --num-shards "$num_shards" \
       --seed "$SEED" \
       --overwrite \

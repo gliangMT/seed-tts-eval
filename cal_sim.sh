@@ -10,33 +10,24 @@ checkpoint_path=$3
 wavlm_base_checkpoint=${4:-${WAVLM_LARGE_CKPT:-}}
 s3prl_hub_dir=${S3PRL_HUB_DIR:-}
 
-backend="${EVAL_BACKEND:-}"
-if [ -z "$backend" ]; then
-    if [ -n "${MUSA_DEVICE_LIST:-}" ]; then
-        backend=musa
-    elif [ -n "${CUDA_DEVICE_LIST:-}" ]; then
-        backend=cuda
-    else
-        backend="${DEFAULT_EVAL_BACKEND:-musa}"
-    fi
-fi
+musa_devices="${MUSA_VISIBLE_DEVICES:-}"
+cuda_devices="${CUDA_VISIBLE_DEVICES:-}"
 
-case "$backend" in
-    musa)
-        visible_devices_var=MUSA_VISIBLE_DEVICES
-        device_list="${MUSA_DEVICE_LIST:-}"
-        default_num_job="${NUM_GPUS:-${ARNOLD_WORKER_GPU:-1}}"
-        ;;
-    cuda)
-        visible_devices_var=CUDA_VISIBLE_DEVICES
-        device_list="${CUDA_DEVICE_LIST:-}"
-        default_num_job="${NUM_GPUS:-${ARNOLD_WORKER_GPU:-1}}"
-        ;;
-    *)
-        echo "EVAL_BACKEND must be musa or cuda: $backend" >&2
-        exit 2
-        ;;
-esac
+if [ -n "$musa_devices" ] && [ -n "$cuda_devices" ]; then
+    echo "Set only one of MUSA_VISIBLE_DEVICES or CUDA_VISIBLE_DEVICES." >&2
+    exit 2
+elif [ -n "$musa_devices" ]; then
+    backend=musa
+    visible_devices_var=MUSA_VISIBLE_DEVICES
+    device_list="$musa_devices"
+elif [ -n "$cuda_devices" ]; then
+    backend=cuda
+    visible_devices_var=CUDA_VISIBLE_DEVICES
+    device_list="$cuda_devices"
+else
+    echo "Set MUSA_VISIBLE_DEVICES or CUDA_VISIBLE_DEVICES, for example MUSA_VISIBLE_DEVICES=0,1." >&2
+    exit 2
+fi
 
 wav_wav_text=$output_dir/wav_res_ref_text
 score_file=$output_dir/wav_res_ref_text.sim
@@ -76,22 +67,10 @@ if [ "$num" -eq 0 ]; then
     exit 1
 fi
 
-if [ -n "$device_list" ]; then
-    IFS=',' read -r -a devices <<< "$device_list"
-    num_job=${NUM_GPUS:-${ARNOLD_WORKER_GPU:-${#devices[@]}}}
-    if [ "${#devices[@]}" -ne "$num_job" ]; then
-        echo "${backend^^} device list has ${#devices[@]} devices, but NUM_GPUS/ARNOLD_WORKER_GPU=$num_job" >&2
-        exit 2
-    fi
-else
-    num_job=$default_num_job
-    devices=()
-    for rank in $(seq 0 $((num_job - 1))); do
-        devices+=("$rank")
-    done
-fi
-if ! [[ "$num_job" =~ ^[1-9][0-9]*$ ]]; then
-    echo "NUM_GPUS/ARNOLD_WORKER_GPU must be a positive integer: $num_job" >&2
+IFS=',' read -r -a devices <<< "$device_list"
+num_job=${#devices[@]}
+if [ "$num_job" -eq 0 ]; then
+    echo "Device list must contain at least one device, for example 0 or 0,1." >&2
     exit 2
 fi
 for eval_device in "${devices[@]}"; do
@@ -104,6 +83,10 @@ if [ "$num_job" -gt "$num" ]; then
     num_job=$num
     devices=("${devices[@]:0:$num_job}")
 fi
+selected_devices="$(IFS=,; echo "${devices[*]}")"
+
+echo "SIM backend: $backend"
+echo "SIM devices: $selected_devices ($num_job workers)"
 
 split -n "l/$num_job" -d -a 2 --additional-suffix=.lst \
     "$wav_wav_text" "$thread_dir/thread-"
